@@ -1,0 +1,133 @@
+function [dag,g_best_score,conv,iterations] = MYGA_ga_process3(data,N,M,MP,scoring_fn,bnet,tour,saved_filename,p_value)
+% MIGA / MI初始化 / 锦标赛选择 / MI 去环 / 支持度MI交叉
+%% Init
+BN_NodesNum = size(bnet.dag,1);         % #网络规模，即网络节点的数量
+ns = bnet.node_sizes;           % node sizes
+conv = struct('f1',zeros(1,M),'se',zeros(1,M),'sp',zeros(1,M),'sc',zeros(1,M));
+iterations = 0;                 % 计数：在指定时间内完成的迭代次数
+max_realtime = get_max_realtime(BN_NodesNum);   % 获取预设的最大运行时间
+inStart = tic;                                                              % tic 运行时间设置
+N2 = bitsll(N,1);           % 选择前的种群规模，bitsll对输入参数 N 进行二位数上逻辑左移一位操作。
+
+[MI,norm_MI] = get_MI(data,ns); 
+norm_MI(isnan(norm_MI)) = 0;
+[~,dataNum] = size(data);
+
+% 计算初始CI阈值
+p_avg = mean(p_value(:));  % 所有p_value的平均值
+fprintf('p-value的均值为: %2.3f\n', p_avg);
+[alpha_candidate,count_CIchange] = updateCI(p_avg, N, M, BN_NodesNum, 0, 0, 0);
+   
+% 设置最小阈值为 0.001
+CI_init = alpha_candidate;
+% CI_init = 0.01;
+fprintf('CI的初始阈值:%9.5f     ', CI_init);
+% 构造超结构，然后初始化种群
+SuperStructure = xor(true(BN_NodesNum), diag(true(1, BN_NodesNum))); 
+for i = 1:BN_NodesNum-1
+    for j = i+1:BN_NodesNum
+        if p_value(i, j) > CI_init
+            SuperStructure(i, j) = false; SuperStructure(j, i) = false;   % remove edge
+        end
+    end
+end
+[pop,l_map_MI] = MYGA_initialization(SuperStructure,N2,norm_MI); 
+fprintf('初始超结构的双向边的数量为: %d\n', size(l_map_MI,1));
+
+pop = MIGA_del_loop_MI(pop,MI,MP);                                         % MI去环，添加了对于父集的限制
+
+saved_file=fopen(saved_filename,'w');
+
+% 初始化 cache 并设置最大缓存条目数
+max_cache_size = 10*BN_NodesNum;
+cache = cell(1, BN_NodesNum);
+for k = 1:BN_NodesNum
+    cache{k} = struct('masks', [], 'scores', []);
+end
+
+% 初始化种群去重结构体
+pop_history = containers.Map('KeyType', 'char', 'ValueType', 'any');
+score_history = [];
+number_edges = [];
+length_history = 0;
+flag_cache = true;
+repeated_count = 0;
+total_overwrite = 0;
+% 第一次评分
+[score, pop_history, score_history, number_edges, repeated_count1, length_history, flag_cache, cache,total_onec_overwrite] = ...
+    Dagzip_repeat_Node(data, N2, ns, pop, pop_history, score_history, number_edges, length_history, scoring_fn, flag_cache, cache,max_cache_size);
+% once_cache_hits = repeated_count1;
+total_overwrite = total_overwrite + total_onec_overwrite;
+
+repeated_count = repeated_count + repeated_count1;
+[g_best,g_best_score] = get_best(score,pop);    % Get-Elite-Individual 初始化种群最优解
+
+%% Main Loop
+CI_new = CI_init;
+count_twomutn = 0;
+
+l_map_MI2 = l_map_MI;
+Dif_BIC = 0;
+for i=1:M
+    if toc(inStart) > max_realtime                                          % toc 运行时间设置
+        iterations = i;
+        [g_best_score,conv] = finalize_output(g_best,data,bnet,scoring_fn,M,conv,iterations);
+        break;
+    end
+    
+    % 保存当前代的种群和评分
+    [norm_score, ~] = score_normalize(score,g_best_score,false);
+    if ~isempty(find(norm_score,1)) % all individuals are not the same
+        [pop_1,~] = selection_tournament(N,N2,pop,score,tour);        % 选择：锦标赛选择
+        conf = get_confidence(pop_1(1:N));
+        pop_1 = MIGA_crossover(N,pop_1,l_map_MI2,conf,i,M);            % 交叉：产生新的后代 N→2N
+        pop_1 = MIGA_del_loop_MI(pop_1,MI,MP);                                     % 去环：MI 
+    else
+        pop_1 = pop;
+    end
+    
+%     pop = bitflip_mutation(N2,l_map_MI,pop_1);                              % 变异：单点变异
+    pop = First_stage_mutation(N2,l_map_MI,pop_1,Dif_BIC,M,i);                   % 根据CI增值变化变异率的单点变异
+    [~, all_repeats] = Find_repeated_arrays(pop);
+    
+    [l_map_MI2] = AdaptiveCI(BN_NodesNum,p_value,norm_MI,CI_new);
+    % 找出 l_map_MI2 中有但 l_map_MI 中没有的行
+    diff_map = setdiff(l_map_MI2, l_map_MI, 'rows');
+    if ~isempty(diff_map)
+        count_twomutn = count_twomutn +1;
+%         pop = RepeatedZip_mutation4(l_map_MI2,pop,all_repeats);
+        pop = Second_stage_mutation(diff_map,pop,all_repeats);            % 二次变异
+    end
+    pop = MIGA_del_loop_MI(pop,MI,MP);                                     % 去环：MI 
+    [score, pop_history, score_history, number_edges, repeated_count1, length_history, flag_cache, cache,total_onec_overwrite] = ...
+                        Dagzip_repeat_Node(data, N2, ns, pop, pop_history, score_history, number_edges, length_history, scoring_fn, flag_cache, cache,max_cache_size);
+    % once_cache_hits = repeated_count1;
+    total_overwrite = total_overwrite + total_onec_overwrite;
+%     [score,pop_history, score_history,number_edges,repeated_count1,length_history,flag_cache,cache] = Dagzip_repeat_score2(data, N2, ns,...
+%                                                     pop, pop_history, score_history,number_edges,length_history, scoring_fn,flag_cache,cache);
+    repeated_count = repeated_count + repeated_count1;
+    [~,g_best_score2] = get_best(score,pop);%这一代最好的个体
+    Dif_BIC = g_best_score2 - g_best_score;
+    Dif_BIC = Dif_BIC/log(dataNum);
+    [CI_new,count_CIchange] = updateCI(p_avg, N, M, BN_NodesNum, Dif_BIC, CI_new,count_CIchange);
+    % 更新最优解
+    [g_best,g_best_score,pop,score] = update_elite(g_best,g_best_score,pop,score);   % Get&Place-Elite-Individual
+%     
+
+    conv = update_conv(conv,g_best,g_best_score,bnet.dag,i);               % 更新收敛行为的结构体 conv
+    fprintf(saved_file,'%d\n',g_best_score);                                % 将每一次迭代的最佳个体评分写入文件
+
+    iterations = i;
+end
+if flag_cache 
+    fprintf('预分配的内存不足~');
+end
+fprintf('最终阈值为:%f     ', CI_new);
+fprintf('最终超结构的双向边的数量为: %d\n', size(l_map_MI2,1));
+fprintf('二次变异的次数为: %d     ', count_twomutn);
+fprintf('避免重复计算的次数为: %d      ', repeated_count);
+fprintf('循环覆盖的次数为:%d      ', total_overwrite);
+fprintf('显著性水平增加的次数为: %d\n', count_CIchange);
+dag = {g_best};
+fclose(saved_file);
+end

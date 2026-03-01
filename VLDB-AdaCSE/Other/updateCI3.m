@@ -1,0 +1,20 @@
+function [CI_new,count_CIchange] = updateCI3(p_avg, N, M, nodesNum, Dif_BIC, CI_new,count_CIchange)
+    % CI_avg: 节点的平均CI值
+    % N: 种群大小
+    % M: 总迭代次数
+    %-Dif_BIC: BIC增量
+%     beta = 1;
+%     numerator = p_avg * ((N / M)* beta);
+%     CI_initial = numerator / nodesNum;
+    CI_initial = 1 / M;
+    if CI_new==0
+        CI_new = CI_initial;
+    else
+ %% 仅在增量小于0的情况下增加搜索空间
+        if Dif_BIC<0
+            sigmoid_value = 1 - exp(Dif_BIC);
+            CI_new = CI_initial*sigmoid_value + CI_new;
+            count_CIchange = count_CIchange + 1;
+        end
+    end
+end

@@ -1,0 +1,61 @@
+function [p] = Duel_mutation(N,l_map,p,Dif_BIC,M,i)
+% Bit-flip mutation. In case of mutation, given starting allele randomly pick one of the others.
+% 单点变异
+l_cnt = size(l_map,1);
+beta = i/M;
+m = calculateMutationRateLog(l_cnt, Dif_BIC, beta);
+for l=1:l_cnt
+    j = l_map(l,1);     k = l_map(l,2);
+    for i=1:N
+        l_val = get_allele(p{i}(j,k),p{i}(k,j));        %获取边缘分布
+        if m >= rand
+            switch l_val
+                case 1
+                    if rand>0.5
+                        p{i}(j,k)=false; p{i}(k,j)=true;
+                    else
+                        p{i}(j,k)=true; p{i}(k,j)=false;
+                    end
+                case 2  
+                    if l_map(l,3)>rand
+                        p{i}(j,k)=true; p{i}(k,j)=false;
+                    else
+                        p{i}(j,k)=false; p{i}(k,j)=false;
+                    end
+                case 3  
+                    if l_map(l,3)>rand
+                        p{i}(j,k)=false; p{i}(k,j)=true;  
+                    else
+                        p{i}(j,k)=false; p{i}(k,j)=false;  
+                    end
+            end
+        end
+    end
+end
+end
+function mutation_rate = calculateMutationRateLog(n, Dif_BIC, beta)
+    % n: 超结构的边数
+    % _BIC: BIC增量
+    % beta: 影响变异率调整幅度的常数
+    
+    % 计算变异率，使用对数变换
+    gamma = 1 / (1 + exp(Dif_BIC));
+    if isinf(gamma) || isnan(gamma)
+        % disp('Warning: exp(-BIC) resulted in NaN or Inf');
+        gamma = 0;  % 使用一个合理的默认值来避免数值不稳定
+    end
+    if Dif_BIC < 0
+        % 如果BIC增量为负（即负增长），增大变异率
+        gamma = 1 - exp(Dif_BIC);
+        mutation_rate = (1 / n) * (1 + gamma+beta);
+    else
+        % 如果BIC增量为正（即正增长），减小变异率
+        gamma2 = exp(-Dif_BIC);
+        if isinf(gamma2) || isnan(gamma2)
+            % disp('Warning: exp(-BIC) resulted in NaN or Inf');
+            gamma2 = 0;  % 使用一个合理的默认值来避免数值不稳定
+        end
+        mutation_rate = gamma2 / n;
+    end
+end
+
