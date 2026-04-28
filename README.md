@@ -72,3 +72,11 @@ addpath(genpath(pwd));
 
 - The TE dataset is used here as an industrial process benchmark from CIPCaD-Bench.
 - The downstream-ranking results are kept in the package for completeness, even though the paper mainly emphasizes the structure-learning results.
+
+## Artifact Notes
+
+For the VLDB-oriented artifact organization in this repository, see:
+
+- `VLDB-AdaCSE/ARTIFACT_GUIDE.md`
+- `VLDB-AdaCSE/TE_Industrial_Application_Package/`
+- `VLDB-AdaCSE/Figure_Scripts/`
